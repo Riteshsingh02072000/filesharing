@@ -2,14 +2,22 @@ from django.shortcuts import render
 from django.contrib.auth import authenticate, login, logout
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from .models import CustomUser
 import json
 from .decorators import role_required
+from rest_framework.decorators import permission_classes
 
 
 
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
+
+from django.contrib.auth.models import User, Group
+from rest_framework.decorators import api_view
+from rest_framework import status
+
+
 
 class ProtectedView(APIView):
     permission_classes = [IsAuthenticated]
@@ -24,37 +32,66 @@ def admin_only_view(request):
     return JsonResponse({'message': 'Welcome, Admin!'})
 
 
-@csrf_exempt
+@api_view(['POST'])
 def register(request):
-    # if request.method == 'POST':
-    #     data = json.loads(request.body)
-    #     username = data['username']
-    #     password = data['password']
-    #     role = data.get('role', 'guest')
-    #     if CustomUser.objects.filter(username=username).exists():
-    #         return JsonResponse({'error': 'User already exists'}, status=400)
-    #     user = CustomUser.objects.create_user(username=username, password=password, role=role)
-    #     return JsonResponse({'message': 'User registered successfully'})
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body.decode('utf-8'))
-            username = data.get('username')
-            password = data.get('password')
-            if not username or not password:
-                return JsonResponse({'error': 'Username and password are required'}, status=400)
-            
-            # Check if user already exists
-            if user.objects.filter(username=username).exists():
-                return JsonResponse({'error': 'Username already taken'}, status=400)
+    """
+    API endpoint to register a new user.
+    Example Request Body:
+    {
+        "username": "john_doe",
+        "password": "securepassword",
+        "email": "john@example.com"
+    }
+    """
+    data = request.data
+    username = data.get('username')
+    password = data.get('password')
+    email = data.get('email')
 
-            # Create the user
-            user = user.objects.create_user(username=username, password=password)
-            return JsonResponse({'message': f'User {user.username} registered successfully!'}, status=201)
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=400)
-    else:
-        return JsonResponse({'error': 'Invalid HTTP method. Only POST is allowed.'}, status=405)
+    if not username or not password or not email:
+        return Response({'error': 'All fields (username, password, email) are required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+    if CustomUser.objects.filter(username=username).exists():
+        return Response({'error': 'Username already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Create the user
+    user = CustomUser.objects.create_user(username=username, email=email, password=password)
+
+    # Assign default "Regular User" group
+    regular_user_group, created = Group.objects.get_or_create(name='Regular User')
+    user.groups.add(regular_user_group)
+
+    return Response({'message': 'User registered successfully!'}, status=status.HTTP_201_CREATED)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@role_required(['admin'])  # Only Admins can assign roles
+def assign_role(request):
+    """
+    API endpoint to assign a role to a user.
+    Example Request Body:
+    {
+        "username": "john_doe",
+        "role": "Admin"
+    }
+    """
+    data = request.data
+    username = data.get('username')
+    role = data.get('role')
+
+    if not username or not role:
+        return Response({'error': 'Both username and role are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.get(username=username)
+        group, created = Group.objects.get_or_create(name=role)
+        user.groups.clear()  # Clear existing roles
+        user.groups.add(group)
+        return Response({'message': f'Role {role} assigned to {username} successfully!'}, status=status.HTTP_200_OK)
+    except User.DoesNotExist:
+        return Response({'error': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @csrf_exempt
 def login_view(request):
