@@ -95,6 +95,7 @@ def assign_role(request):
 
 @csrf_exempt
 def login_view(request):
+    print('Request received:', request.body)
     if request.method == 'POST':
         data = json.loads(request.body)
         username = data['username']
